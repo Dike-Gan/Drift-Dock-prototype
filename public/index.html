@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drift Dock Prototype</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">Drift Dock</div>
+      <div class="pill">Prototype</div>
+    </header>
+
+    <section id="start" class="screen active" aria-labelledby="start-title">
+      <h1 id="start-title">Start a focus session</h1>
+      <p>This prototype helps you pause before leaving and reconnect when you return.</p>
+
+      <section class="voice-card" aria-labelledby="voice-title">
+        <div class="voice-heading">
+          <div>
+            <div class="eyebrow">Voice-to-Focus Plan</div>
+            <h2 id="voice-title">Talk through your plan</h2>
+          </div>
+          <span id="voiceModeBadge" class="mode-badge" hidden>Mock mode</span>
+        </div>
+        <p>Tell us what you are working on, what you want to achieve in this session, and how long you want to focus.</p>
+        <p class="privacy-note">Your recording is used to create this focus plan and is not stored permanently by this prototype.</p>
+        <div id="voiceStatus" class="voice-status" data-state="idle" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="voiceStatusText">Ready to record · up to 90 seconds</span>
+          <strong id="recordingTimer" hidden>00:00</strong>
+        </div>
+        <button id="recordButton" class="btn voice-button" type="button" aria-label="Start voice recording">🎙 Start recording</button>
+        <div id="recordingActions" class="row" hidden>
+          <button id="stopButton" class="btn" type="button" aria-label="Stop voice recording">Stop recording</button>
+          <button id="cancelRecordingButton" class="btn secondary" type="button" aria-label="Cancel voice recording">Cancel</button>
+        </div>
+        <div id="mockControls" class="mock-controls" hidden>
+          <label for="mockTranscript">Mock transcript (development only)</label>
+          <textarea id="mockTranscript" placeholder="Paste a transcript to test without microphone or API access."></textarea>
+          <button id="analyzeMockButton" class="btn secondary" type="button">Analyze mock transcript</button>
+        </div>
+        <div id="voiceError" class="error-message" role="alert" hidden></div>
+      </section>
+
+      <div class="divider"><span>or enter it manually</span></div>
+      <form id="manualForm">
+        <label for="task">What are you working on?</label>
+        <input id="task" autocomplete="off" placeholder="e.g. Prepare seminar presentation" />
+        <label for="goal">Minimum goal for this session</label>
+        <input id="goal" autocomplete="off" placeholder="e.g. Finish slide 6 notes" />
+        <label for="duration">Focus duration</label>
+        <select id="duration">
+          <option value="15">15 minutes</option><option value="25">25 minutes</option>
+          <option value="45" selected>45 minutes</option><option value="50">50 minutes</option>
+        </select>
+        <button id="manualSubmitButton" class="btn" type="submit">Start Focus</button>
+      </form>
+    </section>
+
+    <section id="confirmation" class="screen" aria-labelledby="confirmation-title">
+      <div class="eyebrow">Review before starting</div>
+      <h2 id="confirmation-title">Your focus plan</h2>
+      <p>Edit anything that does not match what you meant.</p>
+      <form id="confirmationForm">
+        <label for="confirmTask">Current task</label>
+        <input id="confirmTask" required />
+        <label for="confirmGoal">Goal for this session</label>
+        <textarea id="confirmGoal" required></textarea>
+        <label for="confirmDuration">Focus duration (minutes)</label>
+        <input id="confirmDuration" type="number" min="1" max="180" placeholder="Add a duration" />
+        <label for="confirmFirstStep">Suggested first step</label>
+        <textarea id="confirmFirstStep"></textarea>
+        <details id="additionalContext">
+          <summary>Additional context detected</summary>
+          <div id="contextContent" class="details-content"></div>
+        </details>
+        <details>
+          <summary>Raw transcript</summary>
+          <p id="rawTranscript" class="transcript"></p>
+        </details>
+        <button class="btn" type="submit">Confirm and start focus</button>
+        <div class="row">
+          <button id="recordAgainButton" class="btn secondary" type="button">Record again</button>
+          <button id="cancelVoiceButton" class="btn secondary" type="button">Use manual input</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="focus" class="screen" aria-labelledby="focus-title">
+      <h2 id="focus-title">Focus Mode</h2>
+      <div class="task-card"><div class="small">Current task</div><strong id="showTask"></strong><div class="small spaced">Minimum goal</div><span id="showGoal"></span></div>
+      <div id="firstStepCard" class="task-card" hidden><div class="small">Start here</div><strong id="showFirstStep"></strong></div>
+      <div class="timer" id="timerCircle"><div class="time" id="timeLeft">45:00</div></div>
+      <p class="muted-center">Imagine your phone is docked. If you want to leave, press the button below.</p>
+      <button class="btn secondary" type="button" data-screen="exit">I want to leave</button>
+      <button id="finishSessionButton" class="btn ghost" type="button">Finish session</button>
+    </section>
+
+    <section id="exit" class="screen" aria-labelledby="exit-title">
+      <h2 id="exit-title">Pause before exit</h2><p>One small pause before unlocking. Why are you leaving this task?</p>
+      <div class="choice" id="reasonChoices">
+        <button type="button" data-reason="Too difficult">The task is too difficult</button><button type="button" data-reason="Too tired">I feel tired</button>
+        <button type="button" data-reason="Too boring">I feel bored</button><button type="button" data-reason="Urgent external reason">There is an urgent external reason</button>
+        <button type="button" data-reason="Just want a short break">I just want a short break</button>
+      </div>
+      <button class="btn secondary" type="button" data-screen="focus">Actually, continue focusing</button>
+    </section>
+
+    <section id="break" class="screen" aria-labelledby="break-title">
+      <h2 id="break-title">Set a return anchor</h2><p>This is a note for your future self. It should make returning easier.</p>
+      <div class="anchor-card"><div class="small">Reason selected</div><strong id="reasonText"></strong></div>
+      <label for="whereStopped">Where did you stop?</label><textarea id="whereStopped" placeholder="e.g. I finished the findings slide and was about to write the persona slide."></textarea>
+      <label for="nextStep">What is the next tiny step?</label><textarea id="nextStep" placeholder="e.g. Open slide 7 and write one rough sentence."></textarea>
+      <label for="returnTime">When do you want to return?</label><select id="returnTime"><option>5 minutes</option><option selected>10 minutes</option><option>15 minutes</option><option>25 minutes</option><option>Not sure</option></select>
+      <button id="startBreakButton" class="btn" type="button">Start break</button><button id="endBecauseLeftButton" class="btn danger" type="button">End session completely</button>
+    </section>
+
+    <section id="onbreak" class="screen" aria-labelledby="onbreak-title">
+      <h2 id="onbreak-title">Break started</h2><p>Your return anchor has been saved. When you come back, Drift Dock will help you restart with a small step.</p>
+      <div class="report-card"><div class="small">Return plan</div><strong id="returnPlan"></strong></div><button id="returnButton" class="btn" type="button">I'm back</button>
+    </section>
+
+    <section id="return" class="screen" aria-labelledby="return-title">
+      <h2 id="return-title">Welcome back</h2><p>Do not restart the whole task. Just reconnect with the next small step.</p>
+      <div class="anchor-card"><div class="small">You stopped here</div><strong id="returnStopped"></strong></div><div class="anchor-card"><div class="small">Next tiny step</div><strong id="returnNext"></strong></div>
+      <div class="choice"><button type="button" data-screen="focus">Continue with this step</button><button id="smallerStepButton" type="button">Make it even smaller</button><button type="button" data-screen="exit">I still want to leave</button></div>
+      <div id="aiBox" class="report-card" hidden><div class="small">Restart suggestion</div><strong id="aiSuggestion"></strong></div>
+    </section>
+
+    <section id="report" class="screen" aria-labelledby="report-title">
+      <h2 id="report-title">Session report</h2><p>This is a simple summary for testing the idea. A future version could generate daily or weekly patterns.</p>
+      <div class="report-card"><div class="small">Task</div><strong id="reportTask"></strong></div><div class="report-card"><div class="small">Interruptions</div><strong id="reportInterruptions"></strong></div><div class="report-card"><div class="small">Main reason</div><strong id="reportReason"></strong></div>
+      <button id="resetButton" class="btn" type="button">Start another test</button>
+    </section>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+  "name": "drift-dock-prototype",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A focus assistant prototype with pause-before-exit, return anchors, and voice-to-focus planning.",
+  "scripts": {
+    "start": "node server/server.js",
+    "dev": "node --watch server/server.js",
+    "test": "node --test",
+    "check": "node --check public/app.js && node --check server/server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "multer": "^2.0.1",
+    "openai": "^5.7.0",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}
