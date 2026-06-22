@@ -7,12 +7,13 @@ const html = await fs.readFile(new URL("../public/index.html", import.meta.url),
 const appSource = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-async function createBrowser({ microphoneError } = {}) {
+async function createBrowser({ microphoneError, onRequest } = {}) {
   const dom = new JSDOM(html, { runScripts:"outside-only", url:"http://localhost:3000" });
   const { window } = dom;
   window.scrollTo = () => {};
-  window.fetch = async (url) => {
+  window.fetch = async (url, options) => {
     if (String(url).includes("/api/config")) return { ok:true, json:async () => ({ voiceFocusMockMode:true }) };
+    onRequest?.(url, options);
     return { ok:true, json:async () => ({
       success:true, mockMode:true,
       transcript:"Prepare the seminar presentation and define its structure for 40 minutes.",
@@ -23,9 +24,15 @@ async function createBrowser({ microphoneError } = {}) {
   Object.defineProperty(window.navigator, "mediaDevices", { configurable:true, value:{ getUserMedia:async () => { if (microphoneError) throw microphoneError; return stream; } } });
   class FakeMediaRecorder extends window.EventTarget {
     static isTypeSupported() { return true; }
-    constructor() { super(); this.state="inactive"; this.mimeType="audio/webm"; }
+    constructor(_stream, options = {}) { super(); this.state="inactive"; this.mimeType=options.mimeType || "audio/webm"; }
     start() { this.state="recording"; }
-    stop() { this.state="inactive"; queueMicrotask(() => this.dispatchEvent(new window.Event("stop"))); }
+    stop() {
+      this.state="inactive";
+      const dataEvent = new window.Event("dataavailable");
+      Object.defineProperty(dataEvent, "data", { value:new window.Blob(["browser audio"], { type:this.mimeType }) });
+      this.dispatchEvent(dataEvent);
+      queueMicrotask(() => this.dispatchEvent(new window.Event("stop")));
+    }
   }
   window.MediaRecorder = FakeMediaRecorder;
   window.eval(appSource);
@@ -83,5 +90,20 @@ test("cancels an active recording without submitting it", async () => {
   document.querySelector("#cancelRecordingButton").click(); await tick();
   assert.match(document.querySelector("#voiceStatusText").textContent, /cancelled/i);
   assert.equal(document.querySelector("#recordButton").hidden, false);
+  dom.window.close();
+});
+
+test("browser recording submits codec MIME type with an explicit matching filename", async () => {
+  let upload;
+  const dom = await createBrowser({ onRequest:(_url, options) => {
+    const file = options.body.get("audio");
+    upload = { name:file.name, type:file.type, size:file.size };
+  } });
+  const { document } = dom.window;
+  document.querySelector("#recordButton").click(); await tick();
+  document.querySelector("#stopButton").click(); await tick(); await tick();
+  assert.equal(upload.name, "recording.webm");
+  assert.equal(upload.type, "audio/webm;codecs=opus");
+  assert.ok(upload.size > 0);
   dom.window.close();
 });

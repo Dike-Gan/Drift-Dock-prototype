@@ -1,28 +1,42 @@
 import fs from "node:fs/promises";
+import crypto from "node:crypto";
 import path from "node:path";
 import { Router } from "express";
 import multer from "multer";
 import { transcribeAudio, MissingApiKeyError } from "../services/transcriptionService.js";
 import { extractFocusPlan } from "../services/focusPlanService.js";
 import { createMockFocusPlan } from "../services/mockFocusPlanService.js";
-
-const SUPPORTED_AUDIO_TYPES = new Set([
-  "audio/webm", "audio/ogg", "audio/mp4", "audio/mpeg", "audio/wav",
-  "audio/x-wav", "audio/m4a", "audio/x-m4a"
-]);
+import { extensionForMimeType, normalizeMimeType } from "../audioFormats.js";
+import { logOpenAIError, logUploadDiagnostics } from "../utils/safeLogger.js";
 
 function safeError(code, message, status = 500) {
   return { status, body: { success: false, error: { code, message } } };
 }
 
-export function createVoiceRouter({ uploadsDirectory }) {
+export function createVoiceRouter({
+  uploadsDirectory,
+  transcribe = transcribeAudio,
+  extract = extractFocusPlan,
+  logger = console
+}) {
   const router = Router();
   const maxBytes = Math.max(1, Number(process.env.MAX_AUDIO_SIZE_MB) || 20) * 1024 * 1024;
+  const storage = multer.diskStorage({
+    destination: uploadsDirectory,
+    filename: (_request, file, callback) => callback(null, `${crypto.randomUUID()}${file.audioExtension}`)
+  });
   const upload = multer({
-    dest: uploadsDirectory,
+    storage,
     limits: { fileSize: maxBytes, files: 1 },
     fileFilter: (_request, file, callback) => {
-      callback(SUPPORTED_AUDIO_TYPES.has(file.mimetype) ? null : new multer.MulterError("LIMIT_UNEXPECTED_FILE", "audio"), SUPPORTED_AUDIO_TYPES.has(file.mimetype));
+      file.normalizedMimeType = normalizeMimeType(file.mimetype);
+      file.audioExtension = extensionForMimeType(file.normalizedMimeType);
+      if (!file.audioExtension) {
+        const error = new multer.MulterError("LIMIT_UNEXPECTED_FILE", "audio");
+        error.uploadCode = "UNSUPPORTED_AUDIO_FORMAT";
+        return callback(error);
+      }
+      callback(null, true);
     }
   });
 
@@ -41,6 +55,7 @@ export function createVoiceRouter({ uploadsDirectory }) {
         if (!request.file && !(mockMode && mockTranscript)) {
           throw safeError("AUDIO_REQUIRED", "Please record some audio before creating a focus plan.", 400);
         }
+        if (request.file) logUploadDiagnostics(logger, request.file);
         if (request.file && request.file.size === 0) {
           throw safeError("EMPTY_AUDIO", "The recording was empty. Please try again.", 400);
         }
@@ -49,17 +64,23 @@ export function createVoiceRouter({ uploadsDirectory }) {
         try {
           transcript = mockMode
             ? (mockTranscript || "Mock recording: review the current task for 25 minutes and decide the next step.")
-            : await transcribeAudio(uploadedPath);
+            : await transcribe({
+                filePath: uploadedPath,
+                filename: `recording${request.file.audioExtension}`,
+                mimeType: request.file.normalizedMimeType
+              });
         } catch (error) {
           if (error instanceof MissingApiKeyError) throw error;
+          if (error?.code === "EMPTY_AUDIO") throw safeError("EMPTY_AUDIO", "The recording was empty. Please try again.", 400);
           if (error?.code === "EMPTY_TRANSCRIPT") throw safeError("EMPTY_TRANSCRIPT", "No speech was detected. Please try again.", 422);
+          logOpenAIError(logger, error);
           throw safeError("TRANSCRIPTION_FAILED", "We could not transcribe the recording. Please try again.", 502);
         }
         if (!transcript.trim()) throw safeError("EMPTY_TRANSCRIPT", "No speech was detected. Please try again.", 422);
 
         let focusPlan;
         try {
-          focusPlan = mockMode ? createMockFocusPlan(transcript) : await extractFocusPlan(transcript);
+          focusPlan = mockMode ? createMockFocusPlan(transcript) : await extract(transcript);
         } catch (error) {
           if (error instanceof MissingApiKeyError) throw error;
           if (error?.code === "INVALID_STRUCTURED_OUTPUT" || error?.name === "ZodError") {

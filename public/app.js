@@ -160,5 +160,5 @@ function disableVoiceStart(disabled){$("recordButton").disabled=disabled;$("anal
 function resetVoiceControls(){$("recordButton").hidden=false;$("recordingActions").hidden=true;$("recordingTimer").hidden=true;disableVoiceStart(false);}
 function clearRecordingTimers(){clearInterval(voice.clock);clearTimeout(voice.maxTimer);voice.clock=null;voice.maxTimer=null;}
 function releaseMicrophone(){voice.stream?.getTracks().forEach((track)=>track.stop());voice.stream=null;}
-function extensionFor(type){if(type.includes("ogg"))return"recording.ogg";if(type.includes("mp4"))return"recording.m4a";return"recording.webm";}
+function extensionFor(type){const mime=String(type).split(";",1)[0].trim().toLowerCase();const extensions={"audio/webm":"webm","audio/ogg":"ogg","audio/wav":"wav","audio/x-wav":"wav","audio/mpeg":"mp3","audio/mp4":"mp4","audio/m4a":"m4a","audio/x-m4a":"m4a"};return`recording.${extensions[mime]||"webm"}`;}
 function formatTime(seconds){return`${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;}
