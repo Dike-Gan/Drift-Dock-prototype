@@ -26,7 +26,30 @@
           <span id="voiceModeBadge" class="mode-badge" hidden>Mock mode</span>
         </div>
         <p>Tell us what you are working on, what you want to achieve in this session, and how long you want to focus.</p>
-        <p class="privacy-note">Your recording is used to create this focus plan and is not stored permanently by this prototype.</p>
+        <div class="prototype-label">User testing prototype — not intended for confidential information.</div>
+        <div class="privacy-note" aria-labelledby="privacyNoticeTitle">
+          <strong id="privacyNoticeTitle">Privacy notice</strong>
+          <p>Your recording and transcript are sent to OpenAI to create your focus plan. The temporary audio file is deleted from our server after processing. Please do not share confidential, highly sensitive, or personally identifying information.</p>
+        </div>
+        <details class="privacy-details">
+          <summary>How your data is processed</summary>
+          <div class="details-content">
+            <ul>
+              <li>Your recording is uploaded securely to our server and sent to OpenAI for speech-to-text processing.</li>
+              <li>The temporary audio file is deleted from our server after processing, whether the request succeeds or fails.</li>
+              <li>The transcript is sent to an OpenAI language model to identify your task, session goal, focus duration, and suggested first step.</li>
+              <li>This prototype does not currently create a user account or permanently store your recording, transcript, or focus plan in its own database.</li>
+              <li>Data sent through the OpenAI API is not used to train OpenAI models unless the API account owner has explicitly opted in to data sharing.</li>
+              <li>OpenAI may temporarily retain some API data for service operation and abuse monitoring, depending on the API endpoint and account configuration.</li>
+              <li>Please avoid mentioning passwords, financial information, health information, confidential work content, or other highly sensitive personal data.</li>
+            </ul>
+          </div>
+        </details>
+        <div class="consent-control">
+          <input id="voiceProcessingConsent" type="checkbox" />
+          <label for="voiceProcessingConsent">I understand and agree to the processing described above.</label>
+        </div>
+        <p id="voiceConsentStatus" class="privacy-status" role="status" aria-live="polite">Voice recording requires consent to the processing described above.</p>
         <div id="voiceStatus" class="voice-status" data-state="idle" role="status" aria-live="polite">
           <span class="status-dot" aria-hidden="true"></span>
           <span id="voiceStatusText">Ready to record · up to 90 seconds</span>

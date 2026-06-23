@@ -1,4 +1,5 @@
 const MAX_RECORDING_SECONDS = 90;
+const VOICE_PROCESSING_CONSENT_KEY = "driftDockVoiceProcessingConsent";
 
 // Future-ready session record. This version stays in browser memory only.
 const session = {
@@ -27,6 +28,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 function bindEvents() {
   $("manualForm").addEventListener("submit", (event) => { event.preventDefault(); startManualSession(); });
   $("recordButton").addEventListener("click", beginRecording);
+  $("voiceProcessingConsent").addEventListener("change", handleVoiceConsentChange);
   $("stopButton").addEventListener("click", () => stopRecording(false));
   $("cancelRecordingButton").addEventListener("click", cancelRecording);
   $("analyzeMockButton").addEventListener("click", analyzeMockTranscript);
@@ -41,6 +43,7 @@ function bindEvents() {
   $("returnButton").addEventListener("click", showReturn);
   $("smallerStepButton").addEventListener("click", generateSmallerStep);
   $("resetButton").addEventListener("click", () => location.reload());
+  initVoiceConsent();
 }
 
 function showScreen(id) {
@@ -52,6 +55,10 @@ function showScreen(id) {
 async function beginRecording() {
   if (voice.requestActive || voice.state === "recording") return;
   clearVoiceError();
+  if (!hasVoiceProcessingConsent()) {
+    updateVoiceConsentStatus(false);
+    return showVoiceError("Please review and accept the voice processing notice before recording.");
+  }
   if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
     return showVoiceError("This browser does not support voice recording. Please use manual input or a current browser.");
   }
@@ -156,9 +163,34 @@ function returnToManual(){showScreen("start");clearVoiceError();setVoiceStatus("
 function setVoiceStatus(state,text){voice.state=state;$("voiceStatus").dataset.state=state;$("voiceStatusText").textContent=text;}
 function showVoiceError(message){$("voiceError").textContent=message;$("voiceError").hidden=false;setVoiceStatus("error",message);}
 function clearVoiceError(){$("voiceError").hidden=true;$("voiceError").textContent="";}
-function disableVoiceStart(disabled){$("recordButton").disabled=disabled;$("analyzeMockButton").disabled=disabled;$("manualSubmitButton").disabled=disabled;}
+function disableVoiceStart(disabled){$("recordButton").disabled=disabled || !hasVoiceProcessingConsent();$("analyzeMockButton").disabled=disabled;$("manualSubmitButton").disabled=disabled;}
 function resetVoiceControls(){$("recordButton").hidden=false;$("recordingActions").hidden=true;$("recordingTimer").hidden=true;disableVoiceStart(false);}
 function clearRecordingTimers(){clearInterval(voice.clock);clearTimeout(voice.maxTimer);voice.clock=null;voice.maxTimer=null;}
 function releaseMicrophone(){voice.stream?.getTracks().forEach((track)=>track.stop());voice.stream=null;}
 function extensionFor(type){const mime=String(type).split(";",1)[0].trim().toLowerCase();const extensions={"audio/webm":"webm","audio/ogg":"ogg","audio/wav":"wav","audio/x-wav":"wav","audio/mpeg":"mp3","audio/mp4":"mp4","audio/m4a":"m4a","audio/x-m4a":"m4a"};return`recording.${extensions[mime]||"webm"}`;}
 function formatTime(seconds){return`${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`;}
+
+function initVoiceConsent(){
+  const consented = sessionStorage.getItem(VOICE_PROCESSING_CONSENT_KEY) === "true";
+  $("voiceProcessingConsent").checked = consented;
+  updateVoiceConsentStatus(consented);
+}
+
+function handleVoiceConsentChange(event){
+  const consented = event.target.checked;
+  if (consented) {
+    sessionStorage.setItem(VOICE_PROCESSING_CONSENT_KEY, "true");
+  } else {
+    sessionStorage.removeItem(VOICE_PROCESSING_CONSENT_KEY);
+  }
+  updateVoiceConsentStatus(consented);
+}
+
+function hasVoiceProcessingConsent(){
+  return $("voiceProcessingConsent")?.checked === true;
+}
+
+function updateVoiceConsentStatus(consented){
+  $("recordButton").disabled = !consented || voice.requestActive || voice.state === "recording" || voice.state === "requesting";
+  $("voiceConsentStatus").textContent = consented ? "Voice recording is available for this browser session." : "Voice recording requires consent to the processing described above.";
+}
