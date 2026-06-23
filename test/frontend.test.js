@@ -8,13 +8,31 @@ const appSource = await fs.readFile(new URL("../public/app.js", import.meta.url)
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 const consentKey = "driftDockVoiceProcessingConsent";
 
-async function createBrowser({ microphoneError, onRequest } = {}) {
+const defaultExitAnchor = {
+  primary_reason:"unclear_task",
+  reason_label:"The task feels unclear",
+  user_explanation:"The section structure is unclear.",
+  where_stopped:"Deciding the section structure.",
+  current_obstacle:"Unsure which section should come first.",
+  next_tiny_step:"Write one question for each section.",
+  planned_break_minutes:10,
+  return_intention:true,
+  success_condition_for_return:"Return after ten minutes and write the section questions.",
+  needs_confirmation:[]
+};
+
+async function createBrowser({ microphoneError, onRequest, exitAnchor = defaultExitAnchor } = {}) {
   const dom = new JSDOM(html, { runScripts:"outside-only", url:"http://localhost:3000" });
   const { window } = dom;
   window.scrollTo = () => {};
   window.fetch = async (url, options) => {
     if (String(url).includes("/api/config")) return { ok:true, json:async () => ({ voiceFocusMockMode:true }) };
     onRequest?.(url, options);
+    if (String(url).includes("/api/voice/exit-anchor")) return { ok:true, json:async () => ({
+      success:true, mockMode:true,
+      transcript:"I'm stuck because the section structure is unclear. I want to take a ten-minute break. When I return, I should write one question for each section.",
+      exitAnchor
+    }) };
     return { ok:true, json:async () => ({
       success:true, mockMode:true,
       transcript:"Prepare the seminar presentation and define its structure for 40 minutes.",
@@ -45,6 +63,14 @@ function grantVoiceConsent(document) {
   const checkbox = document.querySelector("#voiceProcessingConsent");
   checkbox.checked = true;
   checkbox.dispatchEvent(new document.defaultView.Event("change", { bubbles:true }));
+}
+
+function startManualFocus(dom, task = "Prepare seminar presentation", goal = "Draft the structure") {
+  const { document } = dom.window;
+  document.querySelector("#task").value = task;
+  document.querySelector("#goal").value = goal;
+  document.querySelector("#duration").value = "25";
+  document.querySelector("#manualForm").dispatchEvent(new dom.window.Event("submit", { bubbles:true, cancelable:true }));
 }
 
 test("preserves the complete manual focus, exit, return, and report flow", async () => {
@@ -181,5 +207,125 @@ test("browser recording submits codec MIME type with an explicit matching filena
   assert.equal(upload.name, "recording.webm");
   assert.equal(upload.type, "audio/webm;codecs=opus");
   assert.ok(upload.size > 0);
+  dom.window.close();
+});
+
+test("exit voice recording is disabled without consent while quick reasons remain available", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  startManualFocus(dom);
+  document.querySelector('[data-screen="exit"]').click();
+  assert.equal(document.querySelector("#exitRecordButton").disabled, true);
+  document.querySelector('[data-reason="Too difficult"]').click();
+  assert.ok(document.querySelector("#break").classList.contains("active"));
+  assert.equal(document.querySelector("#reasonText").textContent, "Too difficult");
+  dom.window.close();
+});
+
+test("existing session consent enables exit recording", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  grantVoiceConsent(document);
+  startManualFocus(dom);
+  document.querySelector('[data-screen="exit"]').click();
+  assert.equal(document.querySelector("#exitVoiceProcessingConsent").checked, true);
+  assert.equal(document.querySelector("#exitRecordButton").disabled, false);
+  dom.window.close();
+});
+
+test("starts and cancels an exit recording without blocking quick reasons", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  grantVoiceConsent(document);
+  startManualFocus(dom);
+  document.querySelector('[data-screen="exit"]').click();
+  document.querySelector("#exitRecordButton").click(); await tick();
+  assert.equal(document.querySelector("#exitVoiceStatus").dataset.state, "recording");
+  document.querySelector("#exitCancelRecordingButton").click(); await tick();
+  assert.match(document.querySelector("#exitVoiceStatusText").textContent, /cancelled/i);
+  document.querySelector('[data-reason="Too tired"]').click();
+  assert.ok(document.querySelector("#break").classList.contains("active"));
+  dom.window.close();
+});
+
+test("exit browser recording submits WebM with session context", async () => {
+  let upload;
+  const dom = await createBrowser({ onRequest:(url, options) => {
+    if (!String(url).includes("/api/voice/exit-anchor")) return;
+    const file = options.body.get("audio");
+    upload = {
+      name:file.name,
+      type:file.type,
+      size:file.size,
+      sessionContext:JSON.parse(options.body.get("sessionContext"))
+    };
+  } });
+  const { document } = dom.window;
+  grantVoiceConsent(document);
+  startManualFocus(dom, "Draft methods section", "Clarify the order");
+  document.querySelector('[data-screen="exit"]').click();
+  document.querySelector("#exitRecordButton").click(); await tick();
+  document.querySelector("#exitStopButton").click(); await tick(); await tick();
+  assert.equal(upload.name, "recording.webm");
+  assert.equal(upload.type, "audio/webm;codecs=opus");
+  assert.ok(upload.size > 0);
+  assert.equal(upload.sessionContext.current_task, "Draft methods section");
+  assert.equal(upload.sessionContext.current_session_goal, "Clarify the order");
+  assert.ok(document.querySelector("#exit-confirmation").classList.contains("active"));
+  dom.window.close();
+});
+
+test("mock exit flow is editable and populates the existing return anchor flow", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  grantVoiceConsent(document);
+  startManualFocus(dom);
+  document.querySelector('[data-screen="exit"]').click();
+  document.querySelector("#exitMockTranscript").value = "I'm stuck because the section structure is unclear. I want a ten-minute break.";
+  document.querySelector("#analyzeExitMockButton").click(); await tick(); await tick();
+  assert.ok(document.querySelector("#exit-confirmation").classList.contains("active"));
+  assert.equal(document.querySelector("#exitReasonLabel").value, "The task feels unclear");
+  document.querySelector("#exitWhereStopped").value = "At the uncertainty section outline";
+  document.querySelector("#exitNextTinyStep").value = "Write one question for each subsection";
+  document.querySelector("#exitBreakDuration").value = "15";
+  document.querySelector("#exitReturnIntention").value = "true";
+  document.querySelector("#exitAnchorForm").dispatchEvent(new dom.window.Event("submit", { bubbles:true, cancelable:true }));
+  assert.ok(document.querySelector("#break").classList.contains("active"));
+  assert.equal(document.querySelector("#whereStopped").value, "At the uncertainty section outline");
+  assert.equal(document.querySelector("#nextStep").value, "Write one question for each subsection");
+  assert.equal(document.querySelector("#returnTime").value, "15 minutes");
+  document.querySelector("#startBreakButton").click();
+  document.querySelector("#returnButton").click();
+  document.querySelector("#finishSessionButton").click();
+  assert.equal(document.querySelector("#reportInterruptions").textContent, "1");
+  assert.equal(document.querySelector("#reportReason").textContent, "The task feels unclear");
+  dom.window.close();
+});
+
+test("return intention false does not automatically start a break", async () => {
+  const dom = await createBrowser({ exitAnchor:{ ...defaultExitAnchor, return_intention:false } });
+  const { document } = dom.window;
+  grantVoiceConsent(document);
+  startManualFocus(dom);
+  document.querySelector('[data-screen="exit"]').click();
+  document.querySelector("#exitMockTranscript").value = "I think I am done and may not come back.";
+  document.querySelector("#analyzeExitMockButton").click(); await tick(); await tick();
+  assert.ok(document.querySelector("#exit-confirmation").classList.contains("active"));
+  assert.equal(document.querySelector("#exitNoReturnNotice").hidden, false);
+  document.querySelector("#exitAnchorForm").dispatchEvent(new dom.window.Event("submit", { bubbles:true, cancelable:true }));
+  assert.ok(document.querySelector("#exit-confirmation").classList.contains("active"));
+  assert.match(document.querySelector("#exitVoiceError").textContent, /do not intend to return/i);
+  document.querySelector("#exitReturnFocusButton").click();
+  assert.ok(document.querySelector("#focus").classList.contains("active"));
+  dom.window.close();
+});
+
+test("exit record again returns to the exit screen", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  grantVoiceConsent(document);
+  startManualFocus(dom);
+  document.querySelector('[data-screen="exit"]').click();
+  document.querySelector("#exitMockTranscript").value = "I'm stuck and want a ten-minute break.";
+  document.querySelector("#analyzeExitMockButton").click(); await tick(); await tick();
+  assert.ok(document.querySelector("#exit-confirmation").classList.contains("active"));
+  document.querySelector("#exitRecordAgainButton").click();
+  assert.ok(document.querySelector("#exit").classList.contains("active"));
+  assert.equal(document.querySelector("#exitRecordButton").hidden, false);
   dom.window.close();
 });

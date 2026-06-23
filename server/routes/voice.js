@@ -5,7 +5,9 @@ import { Router } from "express";
 import multer from "multer";
 import { transcribeAudio, MissingApiKeyError } from "../services/transcriptionService.js";
 import { extractFocusPlan } from "../services/focusPlanService.js";
+import { extractExitAnchor } from "../services/exitAnchorService.js";
 import { createMockFocusPlan } from "../services/mockFocusPlanService.js";
+import { createMockExitAnchor } from "../services/mockExitAnchorService.js";
 import { extensionForMimeType, normalizeMimeType } from "../audioFormats.js";
 import { logOpenAIError, logUploadDiagnostics } from "../utils/safeLogger.js";
 
@@ -17,6 +19,7 @@ export function createVoiceRouter({
   uploadsDirectory,
   transcribe = transcribeAudio,
   extract = extractFocusPlan,
+  extractExit = extractExitAnchor,
   logger = console
 }) {
   const router = Router();
@@ -40,7 +43,8 @@ export function createVoiceRouter({
     }
   });
 
-  router.post("/focus-plan", (request, response) => {
+  function withAudioUpload(handler) {
+    return (request, response) => {
     upload.single("audio")(request, response, async (uploadError) => {
       let uploadedPath = request.file?.path;
       let result;
@@ -60,35 +64,8 @@ export function createVoiceRouter({
           throw safeError("EMPTY_AUDIO", "The recording was empty. Please try again.", 400);
         }
 
-        let transcript;
-        try {
-          transcript = mockMode
-            ? (mockTranscript || "Mock recording: review the current task for 25 minutes and decide the next step.")
-            : await transcribe({
-                filePath: uploadedPath,
-                filename: `recording${request.file.audioExtension}`,
-                mimeType: request.file.normalizedMimeType
-              });
-        } catch (error) {
-          if (error instanceof MissingApiKeyError) throw error;
-          if (error?.code === "EMPTY_AUDIO") throw safeError("EMPTY_AUDIO", "The recording was empty. Please try again.", 400);
-          if (error?.code === "EMPTY_TRANSCRIPT") throw safeError("EMPTY_TRANSCRIPT", "No speech was detected. Please try again.", 422);
-          logOpenAIError(logger, error);
-          throw safeError("TRANSCRIPTION_FAILED", "We could not transcribe the recording. Please try again.", 502);
-        }
-        if (!transcript.trim()) throw safeError("EMPTY_TRANSCRIPT", "No speech was detected. Please try again.", 422);
-
-        let focusPlan;
-        try {
-          focusPlan = mockMode ? createMockFocusPlan(transcript) : await extract(transcript);
-        } catch (error) {
-          if (error instanceof MissingApiKeyError) throw error;
-          if (error?.code === "INVALID_STRUCTURED_OUTPUT" || error?.name === "ZodError") {
-            throw safeError("INVALID_STRUCTURED_OUTPUT", "We could not create a reliable focus plan. Please try again or use manual input.", 502);
-          }
-          throw safeError("AI_EXTRACTION_FAILED", "We could not analyze the transcript. Please try again or use manual input.", 502);
-        }
-        result = { status: 200, body: { success: true, mockMode, transcript, focusPlan } };
+        const transcript = await getTranscript({ request, uploadedPath, mockMode, mockTranscript, transcribe, logger });
+        result = await handler({ request, transcript, mockMode });
       } catch (error) {
         result = error?.body ? error : mapServiceError(error);
       } finally {
@@ -96,9 +73,70 @@ export function createVoiceRouter({
       }
       response.status(result.status).json(result.body);
     });
-  });
+    };
+  }
+
+  router.post("/focus-plan", withAudioUpload(async ({ transcript, mockMode }) => {
+    let focusPlan;
+    try {
+      focusPlan = mockMode ? createMockFocusPlan(transcript) : await extract(transcript);
+    } catch (error) {
+      if (error instanceof MissingApiKeyError) throw error;
+      if (error?.code === "INVALID_STRUCTURED_OUTPUT" || error?.name === "ZodError") {
+        throw safeError("INVALID_STRUCTURED_OUTPUT", "We could not create a reliable focus plan. Please try again or use manual input.", 502);
+      }
+      throw safeError("AI_EXTRACTION_FAILED", "We could not analyze the transcript. Please try again or use manual input.", 502);
+    }
+    return { status: 200, body: { success: true, mockMode, transcript, focusPlan } };
+  }));
+
+  router.post("/exit-anchor", withAudioUpload(async ({ request, transcript, mockMode }) => {
+    let exitAnchor;
+    try {
+      const sessionContext = parseSessionContext(request.body?.sessionContext);
+      exitAnchor = mockMode ? createMockExitAnchor(transcript) : await extractExit({ transcript, sessionContext });
+    } catch (error) {
+      if (error instanceof MissingApiKeyError) throw error;
+      if (error?.code === "INVALID_STRUCTURED_OUTPUT" || error?.name === "ZodError") {
+        throw safeError("INVALID_STRUCTURED_OUTPUT", "We could not create a reliable return anchor. Please try again or use quick reasons.", 502);
+      }
+      throw safeError("AI_EXTRACTION_FAILED", "We could not analyze the exit reflection. Please try again or use quick reasons.", 502);
+    }
+    return { status: 200, body: { success: true, mockMode, transcript, exitAnchor } };
+  }));
 
   return router;
+}
+
+async function getTranscript({ request, uploadedPath, mockMode, mockTranscript, transcribe, logger }) {
+  let transcript;
+  try {
+    transcript = mockMode
+      ? (mockTranscript || "Mock recording: review the current task for 25 minutes and decide the next step.")
+      : await transcribe({
+          filePath: uploadedPath,
+          filename: `recording${request.file.audioExtension}`,
+          mimeType: request.file.normalizedMimeType
+        });
+  } catch (error) {
+    if (error instanceof MissingApiKeyError) throw error;
+    if (error?.code === "EMPTY_AUDIO") throw safeError("EMPTY_AUDIO", "The recording was empty. Please try again.", 400);
+    if (error?.code === "EMPTY_TRANSCRIPT") throw safeError("EMPTY_TRANSCRIPT", "No speech was detected. Please try again.", 422);
+    logOpenAIError(logger, error);
+    throw safeError("TRANSCRIPTION_FAILED", "We could not transcribe the recording. Please try again.", 502);
+  }
+  if (!transcript.trim()) throw safeError("EMPTY_TRANSCRIPT", "No speech was detected. Please try again.", 422);
+  return transcript;
+}
+
+function parseSessionContext(value) {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function mapServiceError(error) {

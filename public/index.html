@@ -124,12 +124,97 @@
 
     <section id="exit" class="screen" aria-labelledby="exit-title">
       <h2 id="exit-title">Pause before exit</h2><p>One small pause before unlocking. Why are you leaving this task?</p>
+      <section class="voice-card exit-voice-card" aria-labelledby="exit-voice-title">
+        <div class="voice-heading">
+          <div>
+            <div class="eyebrow">Voice Exit Reflection</div>
+            <h3 id="exit-voice-title">Talk through what is making you leave</h3>
+          </div>
+          <span id="exitVoiceModeBadge" class="mode-badge" hidden>Mock mode</span>
+        </div>
+        <p>Tell us why you want to leave, where you stopped, and what might help you return.</p>
+        <p class="privacy-status">Please avoid confidential, highly sensitive, or personally identifying information.</p>
+        <details class="privacy-details">
+          <summary>Voice privacy reminder</summary>
+          <div class="details-content">
+            <p>Your recording and transcript are sent to OpenAI to create your return anchor. The temporary audio file is deleted from our server after processing. This prototype does not permanently store recordings, transcripts, or focus plans in its own database.</p>
+          </div>
+        </details>
+        <div class="consent-control">
+          <input id="exitVoiceProcessingConsent" type="checkbox" />
+          <label for="exitVoiceProcessingConsent">I understand and agree to the processing described above.</label>
+        </div>
+        <p id="exitVoiceConsentStatus" class="privacy-status" role="status" aria-live="polite">Exit voice recording requires consent to the processing described above.</p>
+        <div id="exitVoiceStatus" class="voice-status" data-state="idle" role="status" aria-live="polite">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span id="exitVoiceStatusText">Ready to record an exit reflection · up to 90 seconds</span>
+          <strong id="exitRecordingTimer" hidden>00:00</strong>
+        </div>
+        <button id="exitRecordButton" class="btn voice-button" type="button" aria-label="Start exit voice recording">🎙 Start recording</button>
+        <div id="exitRecordingActions" class="row" hidden>
+          <button id="exitStopButton" class="btn" type="button" aria-label="Stop exit voice recording">Stop recording</button>
+          <button id="exitCancelRecordingButton" class="btn secondary" type="button" aria-label="Cancel exit voice recording">Cancel</button>
+        </div>
+        <div id="exitMockControls" class="mock-controls" hidden>
+          <label for="exitMockTranscript">Mock exit transcript (development only)</label>
+          <textarea id="exitMockTranscript" placeholder="I'm stuck because the section structure is unclear. I want to take a ten-minute break. When I return, I should write one question for each section."></textarea>
+          <button id="analyzeExitMockButton" class="btn secondary" type="button">Analyze mock exit transcript</button>
+        </div>
+        <div id="exitVoiceError" class="error-message" role="alert" hidden></div>
+        <button id="exitClearVoiceErrorButton" class="btn secondary" type="button">Clear errors</button>
+      </section>
+      <div class="divider"><span>or choose a quick reason</span></div>
       <div class="choice" id="reasonChoices">
         <button type="button" data-reason="Too difficult">The task is too difficult</button><button type="button" data-reason="Too tired">I feel tired</button>
         <button type="button" data-reason="Too boring">I feel bored</button><button type="button" data-reason="Urgent external reason">There is an urgent external reason</button>
         <button type="button" data-reason="Just want a short break">I just want a short break</button>
       </div>
       <button class="btn secondary" type="button" data-screen="focus">Actually, continue focusing</button>
+    </section>
+
+    <section id="exit-confirmation" class="screen" aria-labelledby="exit-confirmation-title">
+      <div class="eyebrow">Review before taking a break</div>
+      <h2 id="exit-confirmation-title">Review your return anchor</h2>
+      <p>Edit anything that does not match what you meant. The break starts only after you confirm.</p>
+      <form id="exitAnchorForm">
+        <label for="exitReasonLabel">Why you are leaving</label>
+        <input id="exitReasonLabel" />
+        <label for="exitWhereStopped">Where you stopped</label>
+        <textarea id="exitWhereStopped"></textarea>
+        <label for="exitCurrentObstacle">Current obstacle</label>
+        <textarea id="exitCurrentObstacle"></textarea>
+        <label for="exitNextTinyStep">Next tiny step</label>
+        <textarea id="exitNextTinyStep"></textarea>
+        <label for="exitBreakDuration">Break duration (minutes)</label>
+        <input id="exitBreakDuration" type="number" min="1" max="180" placeholder="Add only if you intend to set one" />
+        <label for="exitReturnIntention">Do you intend to return?</label>
+        <select id="exitReturnIntention">
+          <option value="">Choose before starting a break</option>
+          <option value="true">Yes, I intend to return</option>
+          <option value="unknown">Not sure yet, but start a break</option>
+          <option value="false">No, I may end this session</option>
+        </select>
+        <label for="exitSuccessCondition">Success condition for return</label>
+        <textarea id="exitSuccessCondition"></textarea>
+        <div id="exitNoReturnNotice" class="error-message" role="status" hidden>This reflection suggests you may not intend to return. You can edit that, return to focus, or end the session.</div>
+        <details id="exitNeedsConfirmation">
+          <summary>Needs confirmation</summary>
+          <ul id="exitNeedsConfirmationList" class="details-content"></ul>
+        </details>
+        <details>
+          <summary>Raw transcript</summary>
+          <p id="exitRawTranscript" class="transcript"></p>
+        </details>
+        <button class="btn" type="submit">Confirm and start break</button>
+        <div class="row">
+          <button id="exitRecordAgainButton" class="btn secondary" type="button">Record again</button>
+          <button id="exitUseQuickReasonsButton" class="btn secondary" type="button">Use quick reasons</button>
+        </div>
+        <div class="row">
+          <button id="exitReturnFocusButton" class="btn secondary" type="button">Return to focus</button>
+          <button id="exitEndSessionButton" class="btn danger" type="button">End session completely</button>
+        </div>
+      </form>
     </section>
 
     <section id="break" class="screen" aria-labelledby="break-title">
