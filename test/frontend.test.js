@@ -6,6 +6,7 @@ import { JSDOM } from "jsdom";
 const html = await fs.readFile(new URL("../public/index.html", import.meta.url), "utf8");
 const appSource = await fs.readFile(new URL("../public/app.js", import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+const consentKey = "driftDockVoiceProcessingConsent";
 
 async function createBrowser({ microphoneError } = {}) {
   const dom = new JSDOM(html, { runScripts:"outside-only", url:"http://localhost:3000" });
@@ -31,6 +32,12 @@ async function createBrowser({ microphoneError } = {}) {
   window.eval(appSource);
   await tick();
   return dom;
+}
+
+function grantVoiceConsent(document) {
+  const checkbox = document.querySelector("#voiceProcessingConsent");
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new document.defaultView.Event("change", { bubbles:true }));
 }
 
 test("preserves the complete manual focus, exit, return, and report flow", async () => {
@@ -70,6 +77,7 @@ test("runs the mock voice confirmation flow and supports a non-preset duration",
 test("shows a human-readable microphone denial and keeps manual input available", async () => {
   const denial = new Error("denied"); denial.name = "NotAllowedError";
   const dom = await createBrowser({ microphoneError:denial }); const { document } = dom.window;
+  grantVoiceConsent(document);
   document.querySelector("#recordButton").click(); await tick();
   assert.match(document.querySelector("#voiceError").textContent, /permission was denied/i);
   assert.equal(document.querySelector("#manualSubmitButton").disabled, false);
@@ -78,10 +86,77 @@ test("shows a human-readable microphone denial and keeps manual input available"
 
 test("cancels an active recording without submitting it", async () => {
   const dom = await createBrowser(); const { document } = dom.window;
+  grantVoiceConsent(document);
   document.querySelector("#recordButton").click(); await tick();
   assert.equal(document.querySelector("#voiceStatus").dataset.state, "recording");
   document.querySelector("#cancelRecordingButton").click(); await tick();
   assert.match(document.querySelector("#voiceStatusText").textContent, /cancelled/i);
   assert.equal(document.querySelector("#recordButton").hidden, false);
+  dom.window.close();
+});
+
+test("keeps voice recording disabled until session consent is checked", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  const recordButton = document.querySelector("#recordButton");
+  const checkbox = document.querySelector("#voiceProcessingConsent");
+  assert.equal(checkbox.checked, false);
+  assert.equal(recordButton.disabled, true);
+  assert.match(document.querySelector("#voiceConsentStatus").textContent, /requires consent/i);
+  checkbox.checked = true;
+  checkbox.dispatchEvent(new dom.window.Event("change", { bubbles:true }));
+  assert.equal(recordButton.disabled, false);
+  assert.match(document.querySelector("#voiceConsentStatus").textContent, /available/i);
+  dom.window.close();
+});
+
+test("unchecking consent disables voice recording again", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  const recordButton = document.querySelector("#recordButton");
+  const checkbox = document.querySelector("#voiceProcessingConsent");
+  grantVoiceConsent(document);
+  assert.equal(recordButton.disabled, false);
+  checkbox.checked = false;
+  checkbox.dispatchEvent(new dom.window.Event("change", { bubbles:true }));
+  assert.equal(recordButton.disabled, true);
+  assert.match(document.querySelector("#voiceConsentStatus").textContent, /requires consent/i);
+  dom.window.close();
+});
+
+test("manual input remains usable without voice-processing consent", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  assert.equal(document.querySelector("#recordButton").disabled, true);
+  assert.equal(document.querySelector("#manualSubmitButton").disabled, false);
+  document.querySelector("#task").value = "Write a test plan";
+  document.querySelector("#goal").value = "Draft the privacy cases";
+  document.querySelector("#manualForm").dispatchEvent(new dom.window.Event("submit", { bubbles:true, cancelable:true }));
+  assert.ok(document.querySelector("#focus").classList.contains("active"));
+  assert.equal(document.querySelector("#showTask").textContent, "Write a test plan");
+  dom.window.close();
+});
+
+test("voice consent is stored only in sessionStorage", async () => {
+  const dom = await createBrowser(); const { document, sessionStorage, localStorage } = dom.window;
+  grantVoiceConsent(document);
+  assert.equal(sessionStorage.getItem(consentKey), "true");
+  assert.equal(localStorage.getItem(consentKey), null);
+  document.querySelector("#voiceProcessingConsent").checked = false;
+  document.querySelector("#voiceProcessingConsent").dispatchEvent(new dom.window.Event("change", { bubbles:true }));
+  assert.equal(sessionStorage.getItem(consentKey), null);
+  assert.equal(localStorage.getItem(consentKey), null);
+  dom.window.close();
+});
+
+test("privacy notice and accessible disclosure are present in the voice card", async () => {
+  const dom = await createBrowser(); const { document } = dom.window;
+  const notice = document.querySelector(".privacy-note");
+  const disclosure = document.querySelector(".privacy-details");
+  const checkbox = document.querySelector("#voiceProcessingConsent");
+  assert.match(notice.textContent, /Your recording and transcript are sent to OpenAI/i);
+  assert.match(document.querySelector(".prototype-label").textContent, /User testing prototype/i);
+  assert.equal(disclosure.tagName, "DETAILS");
+  assert.match(disclosure.querySelector("summary").textContent, /How your data is processed/i);
+  assert.match(disclosure.textContent, /not used to train OpenAI models unless/i);
+  assert.equal(document.querySelector("label[for='voiceProcessingConsent']").textContent, "I understand and agree to the processing described above.");
+  assert.equal(checkbox.checked, false);
   dom.window.close();
 });
