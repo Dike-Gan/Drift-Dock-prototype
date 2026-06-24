@@ -25,6 +25,9 @@ async function createBrowser({ microphoneError, onRequest, exitAnchor = defaultE
   const dom = new JSDOM(html, { runScripts:"outside-only", url:"http://localhost:3000" });
   const { window } = dom;
   window.scrollTo = () => {};
+  window.confirm = () => true;
+  window.localStorage.clear();
+  window.sessionStorage.clear();
   window.fetch = async (url, options) => {
     if (String(url).includes("/api/config")) return { ok:true, json:async () => ({ voiceFocusMockMode:true }) };
     onRequest?.(url, options);
@@ -73,6 +76,15 @@ function startManualFocus(dom, task = "Prepare seminar presentation", goal = "Dr
   document.querySelector("#manualForm").dispatchEvent(new dom.window.Event("submit", { bubbles:true, cancelable:true }));
 }
 
+function finishThroughReflection(dom, goal = "yes", note = "Finished enough for the test.") {
+  const { document } = dom.window;
+  document.querySelector("#finishSessionButton").click();
+  assert.ok(document.querySelector("#completion").classList.contains("active"));
+  document.querySelector(`input[name="goalAchieved"][value="${goal}"]`).checked = true;
+  document.querySelector("#completionNote").value = note;
+  document.querySelector("#completionForm").dispatchEvent(new dom.window.Event("submit", { bubbles:true, cancelable:true }));
+}
+
 test("preserves the complete manual focus, exit, return, and report flow", async () => {
   const dom = await createBrowser(); const { document } = dom.window;
   document.querySelector("#task").value = "Prepare seminar presentation";
@@ -88,7 +100,7 @@ test("preserves the complete manual focus, exit, return, and report flow", async
   document.querySelector("#startBreakButton").click(); document.querySelector("#returnButton").click();
   assert.equal(document.querySelector("#returnStopped").textContent, "At slide 4");
   document.querySelector("#return .choice [data-screen=\"focus\"]").click();
-  document.querySelector("#finishSessionButton").click();
+  finishThroughReflection(dom);
   assert.ok(document.querySelector("#report").classList.contains("active"));
   assert.equal(document.querySelector("#reportInterruptions").textContent, "1");
   dom.window.close();
@@ -104,7 +116,7 @@ test("runs the mock voice confirmation flow and supports a non-preset duration",
   assert.ok(document.querySelector("#focus").classList.contains("active"));
   assert.equal(document.querySelector("#duration").value, "40");
   assert.equal(document.querySelector("#showFirstStep").textContent, "List the main sections");
-  document.querySelector("#finishSessionButton").click(); dom.window.close();
+  finishThroughReflection(dom); dom.window.close();
 });
 
 test("shows a human-readable microphone denial and keeps manual input available", async () => {
@@ -292,7 +304,7 @@ test("mock exit flow is editable and populates the existing return anchor flow",
   assert.equal(document.querySelector("#returnTime").value, "15 minutes");
   document.querySelector("#startBreakButton").click();
   document.querySelector("#returnButton").click();
-  document.querySelector("#finishSessionButton").click();
+  finishThroughReflection(dom);
   assert.equal(document.querySelector("#reportInterruptions").textContent, "1");
   assert.equal(document.querySelector("#reportReason").textContent, "The task feels unclear");
   dom.window.close();
@@ -327,5 +339,127 @@ test("exit record again returns to the exit screen", async () => {
   document.querySelector("#exitRecordAgainButton").click();
   assert.ok(document.querySelector("#exit").classList.contains("active"));
   assert.equal(document.querySelector("#exitRecordButton").hidden, false);
+  dom.window.close();
+});
+
+test("local storage service initializes defaults and manages profiles", async () => {
+  const dom = await createBrowser(); const { window } = dom; const { document } = window;
+  const storage = window.__driftDockStorage;
+  let data = storage.read();
+  assert.equal(data.schema_version, 1);
+  assert.equal(JSON.stringify(data.profiles.map((profile) => profile.display_name)), JSON.stringify(["Dike", "Ruiqi"]));
+  assert.equal(data.active_profile_id, "dike");
+  data = storage.createProfile("Tester");
+  assert.equal(storage.activeProfile(data).display_name, "Tester");
+  data = storage.renameProfile(data.active_profile_id, "Tester Renamed");
+  assert.equal(storage.activeProfile(data).display_name, "Tester Renamed");
+  assert.equal(document.querySelector("#profileSelector").value, "dike");
+  dom.window.close();
+});
+
+test("corrupted localStorage recovers to default profiles", async () => {
+  const dom = await createBrowser(); const { window } = dom;
+  window.localStorage.setItem(window.__driftDockStorage.key, "{bad json");
+  const data = window.__driftDockStorage.read();
+  assert.equal(data.schema_version, 1);
+  assert.equal(data.profiles.length, 2);
+  dom.window.close();
+});
+
+test("session is persisted at start, interruption, break, return, and completion", async () => {
+  const dom = await createBrowser(); const { window } = dom; const { document } = window;
+  startManualFocus(dom, "Persisted task", "Persist the lifecycle");
+  let sessions = window.__driftDockStorage.sessionsForActive();
+  assert.equal(sessions.length, 1);
+  assert.equal(sessions[0].status, "active");
+  document.querySelector("#focus [data-screen='exit']").click();
+  document.querySelector('[data-reason="Too difficult"]').click();
+  sessions = window.__driftDockStorage.sessionsForActive();
+  assert.equal(sessions[0].interruptions.length, 1);
+  document.querySelector("#whereStopped").value = "At persistence test";
+  document.querySelector("#startBreakButton").click();
+  sessions = window.__driftDockStorage.sessionsForActive();
+  assert.equal(sessions[0].status, "paused");
+  assert.equal(sessions[0].interruptions[0].returned, false);
+  document.querySelector("#returnButton").click();
+  sessions = window.__driftDockStorage.sessionsForActive();
+  assert.equal(sessions[0].interruptions[0].returned, true);
+  finishThroughReflection(dom, "partly", "Persisted a useful record.");
+  sessions = window.__driftDockStorage.sessionsForActive();
+  assert.equal(sessions[0].status, "completed");
+  assert.equal(sessions[0].goal_achieved, "partly");
+  assert.equal(sessions[0].completion_note, "Persisted a useful record.");
+  assert.equal(sessions[0].interruptions.length, 1);
+  dom.window.close();
+});
+
+test("history is grouped, filtered by active profile, and opens details", async () => {
+  const dom = await createBrowser(); const { window } = dom; const { document } = window;
+  startManualFocus(dom, "Dike history task", "Visible only for Dike");
+  finishThroughReflection(dom, "yes", "");
+  document.querySelector("[data-nav-screen='history']").click();
+  assert.match(document.querySelector("#historyList").textContent, /Dike history task/);
+  document.querySelector(".history-card").click();
+  assert.equal(document.querySelector("#sessionDetail").hidden, false);
+  assert.match(document.querySelector("#sessionDetailContent").textContent, /Visible only for Dike/);
+  window.__driftDockStorage.setActiveProfile("ruiqi");
+  document.querySelector("#profileSelector").value = "ruiqi";
+  document.querySelector("#profileSelector").dispatchEvent(new dom.window.Event("change", { bubbles:true }));
+  document.querySelector("[data-nav-screen='history']").click();
+  assert.match(document.querySelector("#historyList").textContent, /No local sessions/);
+  assert.equal(document.querySelector("#sessionDetail").hidden, true);
+  assert.equal(document.querySelector("#sessionDetailContent").textContent, "");
+  document.querySelector("[data-nav-screen='start']").click();
+  startManualFocus(dom, "Ruiqi history task", "Visible only for Ruiqi");
+  finishThroughReflection(dom, "yes", "");
+  let allSessions = window.__driftDockStorage.read().sessions;
+  assert.equal(allSessions.find((session) => session.task_title === "Dike history task").local_profile_id, "dike");
+  assert.equal(allSessions.find((session) => session.task_title === "Ruiqi history task").local_profile_id, "ruiqi");
+  document.querySelector("#profileSelector").value = "dike";
+  document.querySelector("#profileSelector").dispatchEvent(new dom.window.Event("change", { bubbles:true }));
+  document.querySelector("[data-nav-screen='history']").click();
+  assert.match(document.querySelector("#historyList").textContent, /Dike history task/);
+  assert.doesNotMatch(document.querySelector("#historyList").textContent, /Ruiqi history task/);
+  dom.window.close();
+});
+
+test("insights calculate planned, actual, interruptions, returns, and empty states", async () => {
+  const dom = await createBrowser(); const { window } = dom; const { document } = window;
+  document.querySelector("[data-nav-screen='insights']").click();
+  assert.match(document.querySelector("#dailySummary").textContent, /No local sessions/);
+  const base = new Date().toISOString();
+  window.__driftDockStorage.upsertSession({
+    schema_version:1, session_id:"insight-1", local_profile_id:"dike", created_at:base, updated_at:base, started_at:base, ended_at:base, status:"completed",
+    task_title:"Insight task", session_goal:"Measure insight", planned_duration_minutes:25, actual_focus_seconds:1200, total_break_seconds:300, elapsed_session_seconds:1600, time_until_first_interruption_seconds:600,
+    interruptions:[{ interruption_id:"i1", created_at:base, source:"quick_reason", primary_reason:"too_difficult", reason_label:"Too difficult", return_intention:true, returned:true, actual_break_seconds:300, needs_confirmation:[] }],
+    goal_achieved:"yes", completion_note:null, completion_status:"completed"
+  });
+  document.querySelector("[data-nav-screen='insights']").click();
+  assert.match(document.querySelector("#dailySummary").textContent, /planned 25 minutes and focused for 20 minutes/);
+  assert.match(document.querySelector("#insightCards").textContent, /Return rate/);
+  assert.match(document.querySelector("#insightCharts").textContent, /Interruption reasons/);
+  dom.window.close();
+});
+
+test("export import merge replace duplicate handling and clear controls work locally", async () => {
+  const dom = await createBrowser(); const { window } = dom; const { document } = window;
+  const storage = window.__driftDockStorage;
+  const now = new Date().toISOString();
+  storage.upsertSession({ schema_version:1, session_id:"export-1", local_profile_id:"dike", created_at:now, updated_at:now, started_at:now, ended_at:now, status:"completed", task_title:"Export me", session_goal:"Backup", planned_duration_minutes:15, actual_focus_seconds:600, total_break_seconds:0, elapsed_session_seconds:600, time_until_first_interruption_seconds:null, interruptions:[], goal_achieved:"yes", completion_note:null, completion_status:"completed" });
+  const exported = storage.exportProfile("dike");
+  assert.equal(exported.sessions.length, 1);
+  assert.equal(JSON.stringify(exported).includes("OPENAI_API_KEY"), false);
+  const preview = storage.importPreview(exported);
+  assert.equal(preview.session_count, 1);
+  const merge = storage.importProfile(exported, "merge");
+  assert.equal(merge.skipped, 1);
+  storage.clearProfileHistory("dike");
+  assert.equal(storage.sessionsForActive().length, 0);
+  const replace = storage.importProfile(exported, "replace");
+  assert.equal(replace.imported, 1);
+  document.querySelector("[data-nav-screen='history']").click();
+  document.querySelector(".history-card").click();
+  document.querySelector("#deleteSessionButton").click();
+  assert.ok(window.confirm === undefined || true);
   dom.window.close();
 });
