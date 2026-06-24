@@ -10,12 +10,34 @@
   <main class="app">
     <header class="topbar">
       <div class="brand">Drift Dock</div>
-      <div class="pill">Prototype</div>
+      <div>
+        <label class="sr-only" for="profileSelector">Active local profile</label>
+        <select id="profileSelector" class="profile-select" aria-describedby="profileNote"></select>
+        <div id="profileNote" class="profile-note">Local profile only — not a secure account.</div>
+      </div>
     </header>
+    <nav class="app-nav" aria-label="Primary">
+      <button class="nav-button active" type="button" data-nav-screen="start">Focus</button>
+      <button class="nav-button" type="button" data-nav-screen="history">History</button>
+      <button class="nav-button" type="button" data-nav-screen="insights">Insights</button>
+      <button class="nav-button" type="button" data-nav-screen="settings">Settings</button>
+    </nav>
 
     <section id="start" class="screen active" aria-labelledby="start-title">
       <h1 id="start-title">Start a focus session</h1>
       <p>This prototype helps you pause before leaving and reconnect when you return.</p>
+      <section id="recoveryCard" class="notice-card" aria-labelledby="recovery-title" hidden>
+        <h2 id="recovery-title">Saved session found</h2>
+        <p id="recoverySummary">You have an unfinished local session for this profile.</p>
+        <div class="row">
+          <button id="resumeSessionButton" class="btn" type="button">Resume session</button>
+          <button id="viewSavedSessionButton" class="btn secondary" type="button">View saved state</button>
+        </div>
+        <div class="row">
+          <button id="markAbandonedButton" class="btn secondary" type="button">Mark as abandoned</button>
+          <button id="deleteUnfinishedButton" class="btn danger" type="button">Delete unfinished session</button>
+        </div>
+      </section>
 
       <section class="voice-card" aria-labelledby="voice-title">
         <div class="voice-heading">
@@ -241,7 +263,85 @@
     <section id="report" class="screen" aria-labelledby="report-title">
       <h2 id="report-title">Session report</h2><p>This is a simple summary for testing the idea. A future version could generate daily or weekly patterns.</p>
       <div class="report-card"><div class="small">Task</div><strong id="reportTask"></strong></div><div class="report-card"><div class="small">Interruptions</div><strong id="reportInterruptions"></strong></div><div class="report-card"><div class="small">Main reason</div><strong id="reportReason"></strong></div>
+      <div class="report-card"><div class="small">Goal achieved</div><strong id="reportGoalAchieved"></strong></div>
+      <div class="report-card"><div class="small">What you accomplished</div><strong id="reportCompletionNote"></strong></div>
       <button id="resetButton" class="btn" type="button">Start another test</button>
+    </section>
+
+    <section id="completion" class="screen" aria-labelledby="completion-title">
+      <h2 id="completion-title">Finish this session</h2>
+      <p>A quick check-out helps your local history show whether the session goal was achieved.</p>
+      <form id="completionForm">
+        <fieldset>
+          <legend>Did you achieve the goal of this session?</legend>
+          <label class="radio-row"><input type="radio" name="goalAchieved" value="yes" /> Yes</label>
+          <label class="radio-row"><input type="radio" name="goalAchieved" value="partly" /> Partly</label>
+          <label class="radio-row"><input type="radio" name="goalAchieved" value="no" /> No</label>
+          <label class="radio-row"><input type="radio" name="goalAchieved" value="unsure" checked /> Not sure</label>
+        </fieldset>
+        <label for="completionNote">What did you accomplish? <span class="small">(optional)</span></label>
+        <textarea id="completionNote" placeholder="A short note is enough."></textarea>
+        <button class="btn" type="submit">Save and finish</button>
+        <button id="completeImmediatelyButton" class="btn secondary" type="button">Skip note and finish</button>
+        <button id="abandonSessionButton" class="btn danger" type="button">Abandon session</button>
+      </form>
+    </section>
+
+    <section id="history" class="screen" aria-labelledby="history-title">
+      <h2 id="history-title">History</h2>
+      <p>Local sessions for the active profile only. Raw transcripts are not shown by default.</p>
+      <div id="historyList" class="stack"></div>
+      <article id="sessionDetail" class="detail-panel" aria-labelledby="session-detail-title" hidden>
+        <h3 id="session-detail-title">Session detail</h3>
+        <div id="sessionDetailContent"></div>
+        <button id="deleteSessionButton" class="btn danger" type="button">Delete this session</button>
+      </article>
+    </section>
+
+    <section id="insights" class="screen" aria-labelledby="insights-title">
+      <h2 id="insights-title">Insights</h2>
+      <p>Deterministic summaries from local history. No AI is used for these statistics.</p>
+      <label for="insightRange">Time range</label>
+      <select id="insightRange">
+        <option value="today">Today</option>
+        <option value="7">Last 7 days</option>
+        <option value="30">Last 30 days</option>
+      </select>
+      <div id="dailySummary" class="report-card" role="status"></div>
+      <div id="insightCards" class="metric-grid"></div>
+      <div id="insightCharts" class="stack"></div>
+    </section>
+
+    <section id="settings" class="screen" aria-labelledby="settings-title">
+      <h2 id="settings-title">Settings</h2>
+      <p>Your history is stored only in this browser on this device. Clearing browser data or using another device will not restore it unless you exported a backup.</p>
+      <p class="privacy-status">Local profiles are not secure accounts. Anyone with access to this browser profile may see this local history.</p>
+      <form id="profileForm">
+        <label for="profileName">Active profile name</label>
+        <input id="profileName" />
+        <button class="btn secondary" type="submit">Rename active profile</button>
+      </form>
+      <form id="createProfileForm">
+        <label for="newProfileName">Create another local profile</label>
+        <input id="newProfileName" placeholder="Profile name" />
+        <button class="btn secondary" type="submit">Create profile</button>
+      </form>
+      <div class="settings-group">
+        <button id="exportProfileButton" class="btn secondary" type="button">Export history as JSON</button>
+        <label for="importHistoryInput">Import history from JSON</label>
+        <input id="importHistoryInput" type="file" accept="application/json,.json" />
+        <div id="importPreview" class="notice-card" hidden></div>
+        <div class="row" id="importActions" hidden>
+          <button id="mergeImportButton" class="btn" type="button">Merge with current history</button>
+          <button id="replaceImportButton" class="btn secondary" type="button">Replace current profile history</button>
+        </div>
+      </div>
+      <div class="settings-group">
+        <button id="clearProfileHistoryButton" class="btn danger" type="button">Clear current profile history</button>
+        <button id="deleteProfileButton" class="btn danger" type="button">Delete current local profile</button>
+        <button id="clearAllDataButton" class="btn danger" type="button">Clear all Drift Dock local data</button>
+      </div>
+      <div id="settingsStatus" class="privacy-status" role="status" aria-live="polite"></div>
     </section>
   </main>
   <script src="/app.js" defer></script>
