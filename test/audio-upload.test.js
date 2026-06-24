@@ -9,11 +9,26 @@ import { extensionForMimeType, normalizeMimeType, recordingFilenameForMimeType }
 import { createVoiceRouter } from "../server/routes/voice.js";
 import { transcribeAudio } from "../server/services/transcriptionService.js";
 import { sanitizeDiagnosticMessage } from "../server/utils/safeLogger.js";
+import { createMockExitAnchor } from "../server/services/mockExitAnchorService.js";
+import { validateExitAnchor } from "../server/schemas/exitAnchorSchema.js";
 
 const validPlan = {
   task_title:"Test browser audio", session_goal:"Verify upload handling", duration_minutes:15,
   broader_goal:null, current_problem:null, task_context:null, success_criteria:[],
   suggested_first_step:"Record one sentence", uncertainties:[], needs_confirmation:[]
+};
+
+const validExitAnchor = {
+  primary_reason:"unclear_task",
+  reason_label:"The task feels unclear",
+  user_explanation:"The section structure is unclear.",
+  where_stopped:"Working on the section structure.",
+  current_obstacle:"Unsure what order the section should use.",
+  next_tiny_step:"Write one question for each section.",
+  planned_break_minutes:10,
+  return_intention:true,
+  success_condition_for_return:"Return after ten minutes and write the section questions.",
+  needs_confirmation:[]
 };
 
 function captureLogger() {
@@ -27,13 +42,14 @@ function captureLogger() {
   };
 }
 
-async function withVoiceServer({ transcribe, logger }, callback) {
+async function withVoiceServer({ transcribe, extractExit = async () => validExitAnchor, logger }, callback) {
   const uploadsDirectory = await fs.mkdtemp(path.join(os.tmpdir(), "drift-dock-audio-"));
   const app = express();
   app.use("/api/voice", createVoiceRouter({
     uploadsDirectory,
     transcribe,
     extract:async () => validPlan,
+    extractExit,
     logger
   }));
   const server = await new Promise((resolve) => {
@@ -159,4 +175,67 @@ test("diagnostic sanitizer redacts secrets and collapses newlines", () => {
   assert.equal(message.includes("abc.def"), false);
   assert.equal(message.includes("sk-example-secret"), false);
   assert.equal(message.includes("\n"), false);
+});
+
+test("exit-anchor endpoint reuses transcription, sends context, validates output, and cleans up", async () => {
+  process.env.VOICE_FOCUS_MOCK_MODE = "false";
+  const seen = {};
+  const { logger } = captureLogger();
+  await withVoiceServer({
+    logger,
+    transcribe:async (file) => {
+      seen.transcribe = file;
+      return "I'm stuck because the section structure is unclear. I want a ten-minute break.";
+    },
+    extractExit:async ({ transcript, sessionContext }) => {
+      seen.extract = { transcript, sessionContext };
+      return validateExitAnchor(validExitAnchor);
+    }
+  }, async ({ baseUrl, uploadsDirectory }) => {
+    const form = audioForm("audio/webm;codecs=opus", "exit-recording.webm");
+    form.set("sessionContext", JSON.stringify({ current_task:"Draft methods section", remaining_seconds:1200 }));
+    const response = await fetch(`${baseUrl}/api/voice/exit-anchor`, { method:"POST", body:form });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.success, true);
+    assert.equal(body.exitAnchor.primary_reason, "unclear_task");
+    assert.equal(seen.transcribe.filename, "recording.webm");
+    assert.equal(seen.transcribe.mimeType, "audio/webm");
+    assert.equal(seen.extract.sessionContext.current_task, "Draft methods section");
+    assert.match(seen.extract.transcript, /section structure/);
+    assert.deepEqual(await fs.readdir(uploadsDirectory), []);
+  });
+});
+
+test("mock exit-anchor keeps missing duration null and flags ambiguity", () => {
+  const vague = createMockExitAnchor("I'm stuck and tired because the section is unclear. I need a short break and when I return I should write one question.");
+  assert.equal(vague.planned_break_minutes, null);
+  assert.ok(vague.needs_confirmation.some((item) => /duration/i.test(item)));
+  assert.ok(vague.needs_confirmation.some((item) => /main reason/i.test(item)));
+});
+
+test("exit-anchor cleanup after failure and safe logging avoid transcripts and secrets", async () => {
+  process.env.VOICE_FOCUS_MOCK_MODE = "false";
+  const { logger, entries } = captureLogger();
+  const secret = "sk-test-exit-secret";
+  await withVoiceServer({
+    logger,
+    transcribe:async () => "This complete transcript should not be logged.",
+    extractExit:async () => {
+      const error = new Error(`Bad extraction Authorization: Bearer ${secret}`);
+      error.code = "INVALID_STRUCTURED_OUTPUT";
+      throw error;
+    }
+  }, async ({ baseUrl, uploadsDirectory }) => {
+    const response = await fetch(`${baseUrl}/api/voice/exit-anchor`, {
+      method:"POST", body:audioForm("audio/webm", "exit.webm")
+    });
+    const body = await response.json();
+    assert.equal(response.status, 502);
+    assert.equal(body.error.code, "INVALID_STRUCTURED_OUTPUT");
+    assert.deepEqual(await fs.readdir(uploadsDirectory), []);
+    const serialized = JSON.stringify(entries);
+    assert.equal(serialized.includes(secret), false);
+    assert.equal(serialized.includes("This complete transcript"), false);
+  });
 });

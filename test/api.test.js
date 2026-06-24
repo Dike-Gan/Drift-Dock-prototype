@@ -33,10 +33,31 @@ test("does not infer a missing duration and flags competing tasks", async () => 
   assert.equal(body.focusPlan.duration_minutes, null); assert.ok(body.focusPlan.needs_confirmation.length > 0);
 });
 
+test("creates a valid mock exit return anchor with explicit duration", async () => {
+  const form = new FormData();
+  form.set("mockTranscript", "I'm stuck because the section structure is unclear. I want to take a ten-minute break. When I return, I should write one question for each section.");
+  form.set("sessionContext", JSON.stringify({ current_task:"Draft report section", remaining_seconds:900 }));
+  const response = await fetch(`${baseUrl}/api/voice/exit-anchor`, { method:"POST", body:form });
+  const body = await response.json();
+  assert.equal(response.status, 200);
+  assert.equal(body.success, true);
+  assert.equal(body.mockMode, true);
+  assert.equal(body.exitAnchor.planned_break_minutes, 10);
+  assert.equal(body.exitAnchor.return_intention, true);
+  assert.match(body.exitAnchor.next_tiny_step, /question/i);
+});
+
 test("rejects unsupported audio and leaves no temporary file", async () => {
   const uploads = path.resolve("uploads"); const beforeFiles = await fs.readdir(uploads);
   const form = new FormData(); form.set("audio", new Blob(["not audio"], { type:"text/plain" }), "bad.txt");
   const response = await fetch(`${baseUrl}/api/voice/focus-plan`, { method:"POST", body:form });
+  assert.equal(response.status, 415); const afterFiles = await fs.readdir(uploads); assert.deepEqual(afterFiles, beforeFiles);
+});
+
+test("exit anchor rejects unsupported audio and leaves no temporary file", async () => {
+  const uploads = path.resolve("uploads"); const beforeFiles = await fs.readdir(uploads);
+  const form = new FormData(); form.set("audio", new Blob(["not audio"], { type:"text/plain" }), "bad.txt");
+  const response = await fetch(`${baseUrl}/api/voice/exit-anchor`, { method:"POST", body:form });
   assert.equal(response.status, 415); const afterFiles = await fs.readdir(uploads); assert.deepEqual(afterFiles, beforeFiles);
 });
 
